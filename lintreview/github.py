@@ -1,11 +1,46 @@
 from __future__ import absolute_import
+
 import logging
 import github3
+import jwt
+import requests
 from functools import partial
 
 log = logging.getLogger(__name__)
 
-GITHUB_BASE_URL = 'https://api.github.com/'
+
+def get_private_pem():
+    path = os.environ.get('GITHUB_APP_SECRETFILE', None);
+    with open(path) as fp:
+        return fp.read()
+
+
+def make_auth_token(installation_id):
+    utcnow = datetime.utcnow()
+    duration = timedelta(seconds=60)
+    payload = {
+        "iat": utcnow,
+        "exp": utcnow + duration,
+        "iss": config.get('GITHUB_APP_ID')
+    }
+    pem = get_private_pem()
+    encoded = jwt.encode(payload, pem, "RS256")
+    headers = {
+        "Authorization": "Bearer " + encoded.decode("utf-8"),
+        "Accept": "application/vnd.github.machine-man-preview+json"
+    }
+
+    auth_url = "https://api.github.com/installations/{}/access_tokens".format(
+        installation_id
+    )
+    r = requests.post(auth_url, headers=headers)
+
+    if not r.ok:
+        print(r.json()["message"])
+        r.raise_for_status()
+
+    token = r.json()["token"]
+    return token
 
 
 def get_client(config):
@@ -15,9 +50,17 @@ def get_client(config):
     login = github3.login
     if config.get('GITHUB_URL', GITHUB_BASE_URL) != GITHUB_BASE_URL:
         login = partial(github3.enterprise_login, url=config['GITHUB_URL'])
+
     if 'GITHUB_OAUTH_TOKEN' in config:
         return login(username=config['GITHUB_USER'],
                      token=config['GITHUB_OAUTH_TOKEN'])
+
+    if 'GITHUB_APP_INSTALLATION_ID' in config:
+        return login(
+            username=config['GITHUB_USER'],
+            token=make_auth_token(config['GITHUB_APP_INSTALLATION_ID'])
+        )
+
     return login(username=config['GITHUB_USER'],
                  password=config['GITHUB_PASSWORD'])
 

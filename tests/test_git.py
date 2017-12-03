@@ -1,16 +1,27 @@
 from __future__ import absolute_import
 import lintreview.git as git
 import os
+import shutil
 from .test_github import config
 from nose.tools import eq_, raises, assert_in, with_setup
 from unittest import skipIf
 
 settings = {
-    'WORKSPACE': './tests'
+    'WORKSPACE': './tests/test_clone'
 }
-clone_path = settings['WORKSPACE'] + '/test_clone'
+clone_path = settings['WORKSPACE'] + '/base'
 cant_write_to_test = not(os.access(os.path.abspath('./tests'), os.W_OK))
 
+
+def setup():
+    try:
+        os.makedirs(settings['WORKSPACE'], exist_ok=True)
+    except:
+        pass
+
+def teardown():
+    if git.exists(settings['WORKSPACE']):
+        git.destroy(settings['WORKSPACE'])
 
 def setup_repo():
     git.clone_or_update(
@@ -21,8 +32,9 @@ def setup_repo():
 
 
 def teardown_repo():
-    if git.exists(clone_path):
-        git.destroy(clone_path)
+    dirpath, dirnames, _ = next(os.walk(settings['WORKSPACE']))
+    for dirname in dirnames:
+        shutil.rmtree(os.path.join(dirpath, dirname))
 
 
 def noop():
@@ -91,13 +103,22 @@ def test_repo_operations():
 
 
 @skipIf(cant_write_to_test, 'Cannot write to ./tests skipping')
+@with_setup(setup_repo, teardown_repo)
+def test_add_worktree():
+    git.create_branch(clone_path, "hogehoge")
+    dst_path = os.path.join(os.path.dirname(clone_path), 'master')
+    git.add_worktree(clone_path, dst_path, 'master')
+    assert git.exists(dst_path)
+
+
+@skipIf(cant_write_to_test, 'Cannot write to ./tests skipping')
 @with_setup(noop, teardown_repo)
 def test_clone_or_update():
     git.clone_or_update(
         config,
         'git://github.com/markstory/lint-review.git',
         clone_path,
-        'e4f880c77e6b2c81c81cad5d45dd4e1c39b919a0')
+        'master')
     assert git.exists(clone_path)
 
 
@@ -117,7 +138,7 @@ def test_diff():
 @skipIf(cant_write_to_test, 'Cannot write to ./tests skipping')
 @raises(IOError)
 def test_diff__non_git_path():
-    git.diff(settings['WORKSPACE'] + '/../../')
+    git.diff(settings['WORKSPACE'] + '/../../../../')
 
 
 @skipIf(cant_write_to_test, 'Cannot write to ./tests skipping')

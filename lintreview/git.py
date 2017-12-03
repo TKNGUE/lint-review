@@ -34,20 +34,6 @@ def get_repo_path(user, repo, number, settings):
     return os.path.realpath(path)
 
 
-def private_clone(config, url, path):
-    # Add auth to url
-    parsed_url = urlparse(url)
-    if 'GITHUB_OAUTH_TOKEN' in config:
-        user = config['GITHUB_OAUTH_TOKEN']
-        password = 'x-oauth-basic'
-    else:
-        user = config['GITHUB_USER']
-        password = config['GITHUB_PASSWORD']
-    url = urlunparse((
-        parsed_url[0], (u'{}:{}@{}'.format(user, password, parsed_url[1]))
-    ) + parsed_url[2:])
-    clone(url, path)
-
 
 @log_io_error
 def clone(url, path):
@@ -64,40 +50,91 @@ def clone(url, path):
 def fetch(path, remote):
     """Run git fetch on a repository
     """
-    command = ['git', 'fetch', remote]
+    command = ['git','fetch', remote]
     return_code, _ = _process(command, chdir=path)
     if return_code:
         raise IOError(u"Unable to fetch new changes '{}'".format(path))
     return True
 
 
-def clone_or_update(config, url, path, head, private=False):
+def generate_url(config, url):
+    from six.moves.urllib.parse import urlparse, urlunparse
+
+    # Add auth to url
+    parsed_url = urlparse(url)
+    if 'GITHUB_OAUTH_TOKEN' in config:
+        user = config['GITHUB_OAUTH_TOKEN']
+        password = 'x-oauth-basic'
+    elif 'GITHUB_APP_INSTALLATION_ID' in config:
+        user = 'x-access-token'
+        password = make_auth_token(config['GITHUB_APP_INSTALLATION_ID'])
+    else:
+        user = config['GITHUB_USER']
+        password = config['GITHUB_PASSWORD']
+
+    url = urlunparse((
+        parsed_url[0], (u'{}:{}@{}'.format(user, password, parsed_url[1]))
+    ) + parsed_url[2:])
+
+    return url
+
+
+def clone_or_update(config, url, path, pr_branch, private=False):
     """Clone a new repository and checkout commit,
-    or update an existing clone to the new head
+    or update an existing clone to the new pr_branch
     """
     log.info("Cloning/Updating repository '%s' into '%s'", url, path)
+    master_path = os.path.join(os.path.dirname(path), "base")
+
+    if exists(master_path):
+        fetch(master_path, url if not private else generate_url(config, url))
+    else:
+        clone(url if not private else generate_url(config, url), master_path)
+        create_branch(master_path, "refuse")
+
     if exists(path):
         log.debug("Path '%s' does exist, updating existing clone.", path)
-        fetch(path, 'origin')
+        reset(path, 'origin/{}'.format(pr_branch))
     else:
         log.debug('Repository does not exist, cloning a new one.')
-        if not private:
-            clone(url, path)
-        else:
-            private_clone(config, url, path)
-    log.info("Checking out '%s'", head)
-    checkout(path, head)
+        add_worktree(master_path, path, pr_branch)
+
+    log.info("Checking out '%s'", pr_branch)
+
+
+@log_io_error
+def add_worktree(path, dest_path, branch_name):
+    """Check out `ref` in the repo located on `path`
+    """
+
+    command = ['git', 'worktree', "add", os.path.abspath(dest_path), branch_name]
+    return_code, _ = _process(command, chdir=path)
+    if return_code:
+        raise IOError(
+            u"Unable to add worktree '{}' to '{}'".format(branch_name, path))
+    return True
+
+
+@log_io_error
+def reset(path, ref):
+    """check out `ref` in the repo located on `path`
+    """
+    command = ['git', 'reset', '--hard', ref]
+    return_code, _ = _process(command, chdir=path)
+    if return_code:
+        raise ioerror(u"unable to reset '{}'".format(ref))
+    return True
 
 
 @log_io_error
 def checkout(path, ref):
-    """Check out `ref` in the repo located on `path`
+    """check out `ref` in the repo located on `path`
     """
     command = ['git', 'checkout', ref]
     return_code, _ = _process(command, chdir=path)
     if return_code:
-        raise IOError(u"Unable to checkout '{}'".format(ref))
-    return True
+        raise ioerror(u"unable to checkout '{}'".format(ref))
+    return true
 
 
 @log_io_error
@@ -154,12 +191,11 @@ def create_branch(path, name):
     """Create & checkout a local branch based
     on the currently checked out commit
     """
-    command = ['git', 'checkout', '-b', name]
-    return_code, output = _process(command, chdir=path)
+    command = ['git', '-C', path, 'checkout', '-b', name]
+    return_code, output = _process(command)
     if return_code:
         raise IOError(u"Unable to create branch {}:{}. {}'".format(
-                      name,
-                      output))
+                      path, name, output))
 
 
 @log_io_error

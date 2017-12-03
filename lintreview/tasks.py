@@ -52,7 +52,7 @@ def process_pull_request(user, repo_name, number, lintrc):
 
         # Clone/Update repository
         target_path = git.get_repo_path(user, repo_name, number, config)
-        git.clone_or_update(config, head_repo, target_path, pr_head,
+        git.clone_or_update(config, head_repo, target_path, pr_branch,
                             private_repo)
 
         processor = Processor(repo, pull_request,
